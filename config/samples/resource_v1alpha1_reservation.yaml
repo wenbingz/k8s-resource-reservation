@@ -1,0 +1,12 @@
+apiVersion: resource.scheduling.org/v1alpha1
+kind: Reservation
+metadata:
+  labels:
+    app.kubernetes.io/name: reservation
+    app.kubernetes.io/instance: reservation-sample
+    app.kubernetes.io/part-of: k8s-resource-reservation
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: k8s-resource-reservation
+  name: reservation-sample
+spec:
+  # TODO(user): Add fields here
