@@ -18,13 +18,18 @@ package controllers
 
 import (
 	"context"
-
+	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"strconv"
 )
 
 // ReservationReconciler reconciles a Reservation object
@@ -59,4 +64,69 @@ func (r *ReservationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&resourcev1alpha1.Reservation{}).
 		Complete(r)
+}
+func getPlaceholderPodName(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int) string {
+	return reservation.Name + "_" + strconv.Itoa(resourceId) + "_" + strconv.Itoa(replicaId)
+}
+func (r *ReservationReconciler) reconcile(request reconcile.Request, reservation *resourcev1alpha1.Reservation) (*reconcile.Result, error) {
+	for _, request := range reservation.Spec.ResourceRequests {
+		for i := 0; i < request.Replica; i++ {
+			podName := getPlaceholderPodName(reservation, i, request.ResourceId)
+			pod := &corev1.Pod{}
+			err := r.Get(context.TODO(), types.NamespacedName{
+				Name:      podName,
+				Namespace: reservation.Namespace,
+			}, pod)
+			if err != nil && errors.IsNotFound(err) {
+				err = r.Create(context.TODO(), r.createAPod(reservation, i, request.ResourceId, request.Mem, request.Cpu))
+				if err != nil {
+					return &reconcile.Result{}, err
+				} else {
+					return nil, nil
+				}
+			} else if err != nil {
+				return &reconcile.Result{}, nil
+			} else {
+				podStatus, ok := reservation.Placeholders[podName]
+				if ok {
+					if podStatus.PodStatus != string(pod.Status.Phase) {
+						reservation.Placeholders[podName] = resourcev1alpha1.PodStatus{
+							PodStatus: string(pod.Status.Phase),
+						}
+					}
+				} else {
+					reservation.Placeholders[podName] = resourcev1alpha1.PodStatus{
+						PodStatus: string(pod.Status.Phase),
+					}
+				}
+			}
+		}
+	}
+}
+
+func (r *ReservationReconciler) createAPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int, mem string, core string) *corev1.Pod {
+	labels := reservation.Labels
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      getPlaceholderPodName(reservation, replicaId, resourceId),
+			Namespace: reservation.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:            "pause",
+					Image:           "k8s.gcr.io/pause:3.5",
+					ImagePullPolicy: corev1.PullIfNotPresent,
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							"memory": resource.MustParse(mem),
+							"cpu":    resource.MustParse(core),
+						},
+					},
+				},
+			},
+		},
+	}
+	return pod
 }

@@ -20,8 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+const (
+	ReservationStatusInProgress = "InProgress"
+	ReservationStatusCompleted  = "Completed"
+	ReservationStatusFailed     = "Failed"
+	ReservationStatusTimeout    = "Timeout"
+	ReservationStatusUnknown    = "Unknown"
+)
+
+type ResourceRequest struct {
+	Mem        string `json:mem`
+	Cpu        string `json:cpu`
+	Replica    int    `json:replica`
+	ResourceId int    `json:rid`
+}
+
+type PodStatus struct {
+	PodStatus string `json:podstatus`
+}
 
 // ReservationSpec defines the desired state of Reservation
 type ReservationSpec struct {
@@ -29,13 +45,14 @@ type ReservationSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Reservation. Edit reservation_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	ResourceRequests []ResourceRequest `json:"resourcerequest,omitempty"`
 }
 
 // ReservationStatus defines the observed state of Reservation
 type ReservationStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	status string `json:"status"`
 }
 
 //+kubebuilder:object:root=true
@@ -46,8 +63,9 @@ type Reservation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ReservationSpec   `json:"spec,omitempty"`
-	Status ReservationStatus `json:"status,omitempty"`
+	Spec         ReservationSpec      `json:"spec,omitempty"`
+	Status       ReservationStatus    `json:"status,omitempty"`
+	Placeholders map[string]PodStatus `json:"placeholders,omitempty"`
 }
 
 //+kubebuilder:object:root=true
