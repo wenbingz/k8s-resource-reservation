@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
+	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/pkg/apis/reservation/v1alpha1"
 	//+kubebuilder:scaffold:imports
 )
 
