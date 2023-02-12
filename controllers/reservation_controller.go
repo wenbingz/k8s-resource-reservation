@@ -18,7 +18,7 @@ package controllers
 
 import (
 	"context"
-	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/pkg/apis/reservation/v1alpha1"
+	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
