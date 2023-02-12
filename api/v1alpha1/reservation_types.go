@@ -32,14 +32,14 @@ const (
 )
 
 type ResourceRequest struct {
-	Mem        string `json:mem`
-	Cpu        string `json:cpu`
-	Replica    int    `json:replica`
-	ResourceId int    `json:rid`
+	Mem        string `json:"mem"`
+	Cpu        string `json:"cpu"`
+	Replica    int    `json:"replica"`
+	ResourceId int    `json:"rid"`
 }
 
 type PodStatus struct {
-	PodStatus string `json:podstatus`
+	PodStatus string `json:"podstatus"`
 }
 
 // ReservationSpec defines the desired state of Reservation

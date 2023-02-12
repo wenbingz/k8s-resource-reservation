@@ -102,6 +102,7 @@ func (r *ReservationReconciler) reconcile(request reconcile.Request, reservation
 			}
 		}
 	}
+	return &reconcile.Result{}, nil
 }
 
 func (r *ReservationReconciler) createAPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int, mem string, core string) *corev1.Pod {
