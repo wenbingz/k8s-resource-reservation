@@ -29,6 +29,7 @@ const (
 	ReservationStatusFailed     = "Failed"
 	ReservationStatusTimeout    = "Timeout"
 	ReservationStatusUnknown    = "Unknown"
+	ReservationStatusCreated    = "Created"
 )
 
 type ResourceRequest struct {
@@ -55,7 +56,7 @@ type ReservationSpec struct {
 type ReservationStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	status string `json:"status"`
+	ReservationStatus string `json:"status"`
 }
 
 //+kubebuilder:object:root=true
