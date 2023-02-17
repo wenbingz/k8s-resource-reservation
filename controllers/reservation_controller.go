@@ -51,8 +51,8 @@ const (
 var (
 	keyFunc        = cache.DeletionHandlingMetaNamespaceKeyFunc
 	ReservationCRD = schema.GroupVersionResource{
-		Group:    "resource.scheduling.org",
-		Version:  "v1alpha1",
+		Group:    resourcev1alpha1.GroupVersion.Group, // "resource.scheduling.org",
+		Version:  resourcev1alpha1.GroupVersion.Version,
 		Resource: "Reservation",
 	}
 	podResource = schema.GroupVersionResource{
@@ -164,6 +164,7 @@ func NewReservationController() *ReservationController {
 		UpdateFunc: podEventHandler.onPodUpdate,
 	})
 	go controller.crdInformer.Run(stopper)
+	// go podInformer.Run(stopper)
 	return controller
 
 }
