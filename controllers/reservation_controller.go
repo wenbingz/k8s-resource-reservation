@@ -17,12 +17,21 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
 	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
+	"github.com/wenbingz/k8s-resource-reservation/pkg/config"
 	"golang.org/x/time/rate"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
@@ -31,7 +40,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"os"
 	"path/filepath"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"strconv"
 )
 
 const (
@@ -39,45 +48,26 @@ const (
 	queueTokenBucketSize = 500
 )
 
-//import (
-//	"context"
-//	"fmt"
-//	resourcev1alpha1 "github.com/wenbingz/k8s-resource-reservation/api/v1alpha1"
-//	corev1 "k8s.io/api/core/v1"
-//	"k8s.io/apimachinery/pkg/api/errors"
-//	"k8s.io/apimachinery/pkg/api/resource"
-//	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-//	"k8s.io/apimachinery/pkg/runtime"
-//	"k8s.io/apimachinery/pkg/types"
-//	"k8s.io/client-go/dynamic"
-//	"k8s.io/client-go/tools/cache"
-//	"k8s.io/client-go/tools/clientcmd"
-//	"k8s.io/client-go/tools/record"
-//	"k8s.io/client-go/util/workqueue"
-//	"os"
-//	"path/filepath"
-//	ctrl "sigs.k8s.io/controller-runtime"
-//	"sigs.k8s.io/controller-runtime/pkg/client"
-//	"sigs.k8s.io/controller-runtime/pkg/log"
-//	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-//	"strconv"
-//)
-
 var (
 	keyFunc        = cache.DeletionHandlingMetaNamespaceKeyFunc
 	ReservationCRD = schema.GroupVersionResource{
-		Group:    resourcev1alpha1.GroupVersion.Group,
-		Version:  resourcev1alpha1.GroupVersion.Version,
+		Group:    "resource.scheduling.org",
+		Version:  "v1alpha1",
 		Resource: "Reservation",
+	}
+	podResource = schema.GroupVersionResource{
+		Version:  "v1",
+		Resource: "pods",
 	}
 )
 
 type ReservationController struct {
-	stopper     chan struct{}
+	Stopper     chan struct{}
 	queue       workqueue.RateLimitingInterface
-	crdCli      dynamic.Interface
+	dynamicCli  dynamic.Interface
 	crdInformer cache.SharedIndexInformer
 	crdLister   cache.GenericLister
+	podLister   cache.GenericLister
 	cacheSynced cache.InformerSynced
 	podInformer cache.SharedIndexInformer
 	recorder    record.EventRecorder
@@ -90,14 +80,45 @@ func (rc *ReservationController) onAdd(obj interface{}) {
 }
 
 func (rc *ReservationController) onUpdate(oldObj interface{}, obj interface{}) {
-	fmt.Println("update an obj!")
+	oldReserve := oldObj.(*resourcev1alpha1.Reservation)
+	newReserve := obj.(*resourcev1alpha1.Reservation)
+	if oldReserve.ResourceVersion == newReserve.ResourceVersion {
+		return
+	}
+	if !equality.Semantic.DeepEqual(oldReserve, newReserve) {
+	}
+	fmt.Sprintf("a reservation %s has been updated ", oldReserve.Name)
 }
 
 func (rc *ReservationController) onDelete(obj interface{}) {
-	fmt.Println("delete an obj!")
+	rc.handleReservationDelete(obj)
 }
 
-func (rc *ReservationController) newReservationController() *ReservationController {
+func (rc *ReservationController) handleReservationDelete(obj interface{}) error {
+	var reserve *resourcev1alpha1.Reservation
+	switch obj.(type) {
+	case *resourcev1alpha1.Reservation:
+		{
+			reserve = obj.(*resourcev1alpha1.Reservation)
+		}
+	case cache.DeletedFinalStateUnknown:
+		{
+			reserve = obj.(cache.DeletedFinalStateUnknown).Obj.(*resourcev1alpha1.Reservation)
+		}
+	}
+	for _, request := range reserve.Spec.ResourceRequests {
+		for i := 0; i < request.Replica; i++ {
+			podName := rc.getPlaceholderPodName(reserve, request.ResourceId, i)
+			_, err := rc.podLister.ByNamespace(reserve.Namespace).Get(podName)
+			if err != nil && errors.IsNotFound(err) {
+				fmt.Sprintf("trying to remove pod %s - %s", podName, reserve.Namespace)
+				rc.dynamicCli.Resource(podResource).Namespace(reserve.Namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
+			}
+		}
+	}
+	return nil
+}
+func NewReservationController() *ReservationController {
 	userHomePath, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Println("error when get user home dir")
@@ -119,27 +140,30 @@ func (rc *ReservationController) newReservationController() *ReservationControll
 		"reservation-controller")
 	stopper := make(chan struct{})
 	controller := &ReservationController{
-		crdCli:  dynamicCli,
-		queue:   queue,
-		stopper: stopper,
+		dynamicCli: dynamicCli,
+		queue:      queue,
+		Stopper:    stopper,
 	}
-	controller.crdInformer = dynamicinformer.NewDynamicSharedInformerFactory(controller.crdCli, 0).ForResource(ReservationCRD).Informer()
-	controller.crdLister = dynamicinformer.NewDynamicSharedInformerFactory(controller.crdCli, 0).ForResource(ReservationCRD).Lister()
+	controller.crdInformer = dynamicinformer.NewDynamicSharedInformerFactory(controller.dynamicCli, 0).ForResource(ReservationCRD).Informer()
+	controller.crdLister = dynamicinformer.NewDynamicSharedInformerFactory(controller.dynamicCli, 0).ForResource(ReservationCRD).Lister()
 	controller.crdInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		DeleteFunc: rc.onDelete,
+		DeleteFunc: controller.onDelete,
 		AddFunc:    controller.onAdd,
-		UpdateFunc: rc.onUpdate,
+		UpdateFunc: controller.onUpdate,
 	})
+
 	podEventHandler := newPodEventHandler(controller.queue.AddRateLimited, controller.crdLister)
 	podInformer := dynamicinformer.NewDynamicSharedInformerFactory(dynamicCli, 0).ForResource(schema.GroupVersionResource{
 		Version:  "v1",
 		Resource: "pods",
 	}).Informer()
+	controller.podLister = dynamicinformer.NewDynamicSharedInformerFactory(dynamicCli, 0).ForResource(podResource).Lister()
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    podEventHandler.onPodAdd,
 		DeleteFunc: podEventHandler.onPodDeleted,
 		UpdateFunc: podEventHandler.onPodUpdate,
 	})
+	go controller.crdInformer.Run(stopper)
 	return controller
 
 }
@@ -163,8 +187,29 @@ func (rc *ReservationController) getReservation(namespace string, name string) (
 	return reserve.(*resourcev1alpha1.Reservation), nil
 }
 
-func (rc *ReservationController) handleNewlyCreatedReservation(reservation *resourcev1alpha1.Reservation) *resourcev1alpha1.Reservation {
-	return nil
+func (rc *ReservationController) getPlaceholderPodName(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int) string {
+	return reservation.Name + "-" + strconv.Itoa(resourceId) + "-" + strconv.Itoa(replicaId)
+}
+
+func (rc *ReservationController) handleNewlyCreatedReservation(reservation *resourcev1alpha1.Reservation) {
+	for _, request := range reservation.Spec.ResourceRequests {
+		for i := 0; i < request.Replica; i++ {
+			podName := rc.getPlaceholderPodName(reservation, i, request.ResourceId)
+			_, err := rc.podLister.ByNamespace(reservation.Namespace).Get(podName)
+			if err != nil && errors.IsNotFound(err) {
+				podToCreate := rc.assemblyAPod(reservation, i, request.ResourceId, request.Mem, request.Cpu)
+				unstructuredPod, err := runtime.DefaultUnstructuredConverter.ToUnstructured(podToCreate)
+				if err != nil {
+					fmt.Println("error when convert pod into unstructured data")
+				}
+				rc.dynamicCli.Resource(podResource).Create(context.TODO(), &unstructured.Unstructured{Object: unstructuredPod}, metav1.CreateOptions{})
+				//_, err := rc.dynamicCli.Resource().Namespace(reservation.Namespace).Create(context.TODO(), &runtime.Unstructured(podToCreate), interface{})
+			} else {
+				fmt.Printf("already found this pod %s - %s \n", podName, reservation.Namespace)
+			}
+		}
+	}
+	reservation.Status.ReservationStatus = resourcev1alpha1.ReservationStatusInProgress
 }
 func (rc *ReservationController) syncReservation(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
@@ -182,8 +227,57 @@ func (rc *ReservationController) syncReservation(key string) error {
 	switch reserveCopy.Status.ReservationStatus {
 	case resourcev1alpha1.ReservationStatusCreated:
 		rc.handleNewlyCreatedReservation(reserveCopy)
+	case resourcev1alpha1.ReservationStatusInProgress:
+		rc.updateReservationStatusByCheckingPods(reserveCopy)
+	case resourcev1alpha1.ReservationStatusFailed:
+		{
+
+		}
+	case resourcev1alpha1.ReservationStatusTimeout:
+		{
+
+		}
 	}
 	return nil
+}
+
+func (rc *ReservationController) updateReservationStatusByCheckingPods(reservation *resourcev1alpha1.Reservation) {
+	pods, err := rc.getReservationPods(reservation)
+	if err != nil {
+		fmt.Printf("error when getting reservation pods with %s \n", reservation.Name)
+		return
+	}
+	var total int = 0
+	for _, request := range reservation.Spec.ResourceRequests {
+		total += request.Replica
+	}
+	var cnt int = 0
+	stats := make(map[int]map[int]bool)
+	for _, pod := range pods {
+		_, resourceId, replicaId := splitReservationPodName(pod.Name)
+		reservation.Placeholders[pod.Name] = resourcev1alpha1.PodStatus{
+			PodStatus: string(pod.Status.Phase),
+		}
+		if pod.Status.Phase == v1.PodRunning {
+			cnt += 1
+		}
+		stats[resourceId][replicaId] = true
+	}
+	for _, request := range reservation.Spec.ResourceRequests {
+		for r := 0; r < request.Replica; r++ {
+			if !stats[request.ResourceId][r] {
+				podToCreate := rc.assemblyAPod(reservation, request.ResourceId, r, request.Mem, request.Cpu)
+				unstructuredPod, err := runtime.DefaultUnstructuredConverter.ToUnstructured(podToCreate)
+				if err != nil {
+					fmt.Println("error when convert pod into unstructured data")
+				}
+				rc.dynamicCli.Resource(podResource).Create(context.TODO(), &unstructured.Unstructured{Object: unstructuredPod}, metav1.CreateOptions{})
+			}
+		}
+	}
+	if cnt == total {
+		reservation.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCompleted
+	}
 }
 func (rc *ReservationController) processNextItem() bool {
 	key, quit := rc.queue.Get()
@@ -199,10 +293,50 @@ func (rc *ReservationController) processNextItem() bool {
 	return true
 }
 
-// ReservationReconciler reconciles a Reservation object
-type ReservationReconciler struct {
-	client.Client
-	Scheme *runtime.Scheme
+func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int, mem string, core string) *v1.Pod {
+	labels := reservation.Labels
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rc.getPlaceholderPodName(reservation, replicaId, resourceId),
+			Namespace: reservation.Namespace,
+			Labels:    labels,
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:            "pause",
+					Image:           "k8s.gcr.io/pause:3.5",
+					ImagePullPolicy: v1.PullIfNotPresent,
+					Resources: v1.ResourceRequirements{
+						Requests: v1.ResourceList{
+							"memory": resource.MustParse(mem),
+							"cpu":    resource.MustParse(core),
+						},
+					},
+				},
+			},
+		},
+	}
+	return pod
+}
+
+func (rc *ReservationController) getReservationPods(reservation *resourcev1alpha1.Reservation) ([]*v1.Pod, error) {
+	matchLabels := map[string]string{config.ReservationAppLabel: reservation.Name}
+	selector := labels.SelectorFromSet(matchLabels)
+	pods, err := rc.podLister.ByNamespace(reservation.Namespace).List(selector)
+	var res []*v1.Pod
+	for _, p := range pods {
+		res = append(res, p.(*v1.Pod))
+	}
+	return res, err
+}
+
+func (rc *ReservationController) RunController() {
+	fmt.Println("Launching reservation controller")
+	defer utilruntime.HandleCrash()
+	for rc.processNextItem() {
+		fmt.Println("next loop")
+	}
 }
 
 //+kubebuilder:rbac:groups=resource.scheduling.org,resources=reservations,verbs=get;list;watch;create;update;patch;delete
