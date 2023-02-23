@@ -30,11 +30,14 @@ func (handler *PodEventHandler) onPodAdd(obj interface{}) {
 }
 
 func (handler *PodEventHandler) onPodUpdate(old, updated interface{}) {
+	fmt.Println("detect pod update event")
 	var oldPod *v1.Pod
 	var updatedPod *v1.Pod
 	runtime.DefaultUnstructuredConverter.FromUnstructured(old.(*unstructured.Unstructured).Object, &oldPod)
 	runtime.DefaultUnstructuredConverter.FromUnstructured(updated.(*unstructured.Unstructured).Object, &updatedPod)
-
+	fmt.Println(oldPod.Namespace, " --------------- ", oldPod.Name)
+	fmt.Sprintf("detect update event to pod %s - %s", oldPod.Namespace, oldPod.Name)
+	fmt.Println(updatedPod.ResourceVersion, oldPod.ResourceVersion)
 	if updatedPod.ResourceVersion == oldPod.ResourceVersion {
 		return
 	}
@@ -64,11 +67,13 @@ func (handler *PodEventHandler) onPodDeleted(obj interface{}) {
 
 func (handler *PodEventHandler) enqueueKeyForReservation(pod *v1.Pod) {
 	appName, ok := getReservationAppName(pod)
+	fmt.Println("app name ", appName)
 	if !ok {
 		return
 	}
 	_, err := handler.reservationLister.ByNamespace(pod.Namespace).Get(appName)
 	if err != nil {
+		fmt.Println("cannot get the targeted reservation. ", err)
 		return
 	}
 	appKey := createMetaNamespaceKey(pod.Namespace, appName)

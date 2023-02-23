@@ -9,6 +9,7 @@ import (
 )
 
 func getReservationAppName(pod *v1.Pod) (string, bool) {
+	fmt.Println(pod.Labels, " ------------- ")
 	appName, ok := pod.Labels[config.ReservationAppLabel]
 	return appName, ok
 }

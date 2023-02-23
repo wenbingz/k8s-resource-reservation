@@ -276,7 +276,10 @@ func (rc *ReservationController) syncReservation(key string) error {
 	case resourcev1alpha1.ReservationStatusCreated:
 		rc.handleNewlyCreatedReservation(reserveCopy)
 	case resourcev1alpha1.ReservationStatusInProgress:
-		rc.updateReservationStatusByCheckingPods(reserveCopy)
+		{
+			fmt.Println("here to update reservation status")
+			rc.updateReservationStatusByCheckingPods(reserveCopy)
+		}
 	case resourcev1alpha1.ReservationStatusFailed:
 		{
 
@@ -287,9 +290,7 @@ func (rc *ReservationController) syncReservation(key string) error {
 		}
 	}
 	unstructuredObj, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(reserveCopy)
-	fmt.Println(reserveCopy.Spec.Status.ReservationStatus, "------<>", reserveCopy.Spec.Placeholders, unstructuredObj)
 	res, err := rc.dynamicCli.Resource(ReservationCRD).Namespace(reserve.Namespace).Update(context.TODO(), &unstructured.Unstructured{Object: unstructuredObj}, metav1.UpdateOptions{})
-	fmt.Println(res.Object)
 	if err != nil {
 		fmt.Println(err, res.Object)
 	}
@@ -310,11 +311,17 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 	stats := make(map[int]map[int]bool)
 	for _, pod := range pods {
 		_, resourceId, replicaId := splitReservationPodName(pod.Name)
+		if reservation.Spec.Placeholders == nil {
+			reservation.Spec.Placeholders = make(map[string]resourcev1alpha1.PodStatus)
+		}
 		reservation.Spec.Placeholders[pod.Name] = resourcev1alpha1.PodStatus{
 			PodStatus: string(pod.Status.Phase),
 		}
 		if pod.Status.Phase == v1.PodRunning {
 			cnt += 1
+		}
+		if stats[resourceId] == nil {
+			stats[resourceId] = make(map[int]bool)
 		}
 		stats[resourceId][replicaId] = true
 	}
@@ -331,11 +338,13 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 		}
 	}
 	if cnt == total {
-		reservation.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCompleted
+		reservation.Spec.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCompleted
 	}
 }
 func (rc *ReservationController) processNextItem() bool {
+	fmt.Println("trying to get a key")
 	key, quit := rc.queue.Get()
+	fmt.Println("get a key ", key)
 	if quit {
 		return false
 	}
@@ -350,18 +359,20 @@ func (rc *ReservationController) processNextItem() bool {
 }
 
 func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int, mem string, core string) *v1.Pod {
-	labels := reservation.Labels
+	//labels := reservation.Labels
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rc.getPlaceholderPodName(reservation, replicaId, resourceId),
 			Namespace: reservation.Namespace,
-			Labels:    labels,
+			Labels: map[string]string{
+				config.ReservationAppLabel: reservation.Name,
+			},
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{
 				{
 					Name:            "pause",
-					Image:           "k8s.gcr.io/pause:3.5",
+					Image:           "docker.io/google/pause:latest",
 					ImagePullPolicy: v1.PullIfNotPresent,
 					Resources: v1.ResourceRequirements{
 						Requests: v1.ResourceList{
@@ -382,6 +393,7 @@ func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Rese
 					Effect:   v1.TaintEffectNoSchedule,
 				},
 			},
+			PriorityClassName: config.PlaceholderPodPriorityClass,
 		},
 	}
 	return pod
@@ -391,9 +403,14 @@ func (rc *ReservationController) getReservationPods(reservation *resourcev1alpha
 	matchLabels := map[string]string{config.ReservationAppLabel: reservation.Name}
 	selector := labels.SelectorFromSet(matchLabels)
 	pods, err := rc.podLister.ByNamespace(reservation.Namespace).List(selector)
+	if err != nil {
+		fmt.Println("fail to get reservation placeholder pods", err)
+	}
 	var res []*v1.Pod
 	for _, p := range pods {
-		res = append(res, p.(*v1.Pod))
+		var temp *v1.Pod
+		runtime.DefaultUnstructuredConverter.FromUnstructured(p.(*unstructured.Unstructured).Object, &temp)
+		res = append(res, temp)
 	}
 	return res, err
 }
