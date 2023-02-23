@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"fmt"
 	"github.com/golang/glog"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -19,13 +22,18 @@ func newPodEventHandler(enqueueFunc func(interface{}), lister cache.GenericListe
 }
 
 func (handler *PodEventHandler) onPodAdd(obj interface{}) {
-	pod := obj.(*v1.Pod)
+	fmt.Println("into on add key")
+	var pod *v1.Pod
+	runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, &pod)
+	fmt.Println(pod.Name + " --- " + pod.Namespace)
 	handler.enqueueKeyForReservation(pod)
 }
 
 func (handler *PodEventHandler) onPodUpdate(old, updated interface{}) {
-	oldPod := old.(*v1.Pod)
-	updatedPod := updated.(*v1.Pod)
+	var oldPod *v1.Pod
+	var updatedPod *v1.Pod
+	runtime.DefaultUnstructuredConverter.FromUnstructured(old.(*unstructured.Unstructured).Object, &oldPod)
+	runtime.DefaultUnstructuredConverter.FromUnstructured(updated.(*unstructured.Unstructured).Object, &updatedPod)
 
 	if updatedPod.ResourceVersion == oldPod.ResourceVersion {
 		return
@@ -35,16 +43,22 @@ func (handler *PodEventHandler) onPodUpdate(old, updated interface{}) {
 }
 
 func (handler *PodEventHandler) onPodDeleted(obj interface{}) {
+	objUnstructured, ok := obj.(*unstructured.Unstructured)
 	var deletedPod *v1.Pod
-	switch obj.(type) {
-	case *v1.Pod:
-		deletedPod = obj.(*v1.Pod)
-	case cache.DeletedFinalStateUnknown:
-		deletedPod = obj.(cache.DeletedFinalStateUnknown).Obj.(*v1.Pod)
+	if !ok {
+		tomeStone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			fmt.Errorf("could not get object from tombstone %+v", obj)
+			return
+		}
+		runtime.DefaultUnstructuredConverter.FromUnstructured(tomeStone.Obj.(*unstructured.Unstructured).Object, &deletedPod)
+	} else {
+		runtime.DefaultUnstructuredConverter.FromUnstructured(objUnstructured.Object, &deletedPod)
 	}
 	if deletedPod == nil {
 		return
 	}
+	fmt.Println("detect delete event to pod " + deletedPod.Name + " - " + deletedPod.Namespace)
 	handler.enqueueKeyForReservation(deletedPod)
 }
 
