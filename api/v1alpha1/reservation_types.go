@@ -49,7 +49,9 @@ type ReservationSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Reservation. Edit reservation_types.go to remove/update
-	ResourceRequests []ResourceRequest `json:"resourcerequest,omitempty"`
+	ResourceRequests []ResourceRequest    `json:"resourcerequest,omitempty"`
+	Status           ReservationStatus    `json:"status,omitempty"`
+	Placeholders     map[string]PodStatus `json:"placeholders,omitempty"`
 }
 
 // ReservationStatus defines the observed state of Reservation
@@ -67,9 +69,7 @@ type Reservation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec         ReservationSpec      `json:"spec,omitempty"`
-	Status       ReservationStatus    `json:"status,omitempty"`
-	Placeholders map[string]PodStatus `json:"placeholders,omitempty"`
+	Spec ReservationSpec `json:"spec,omitempty"`
 }
 
 //+kubebuilder:object:root=true

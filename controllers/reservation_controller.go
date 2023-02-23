@@ -249,7 +249,7 @@ func (rc *ReservationController) handleNewlyCreatedReservation(reservation *reso
 			}
 		}
 	}
-	reservation.Status.ReservationStatus = resourcev1alpha1.ReservationStatusInProgress
+	reservation.Spec.Status.ReservationStatus = resourcev1alpha1.ReservationStatusInProgress
 }
 func (rc *ReservationController) syncReservation(key string) error {
 	fmt.Println("start to sync reservation key " + key)
@@ -267,12 +267,12 @@ func (rc *ReservationController) syncReservation(key string) error {
 		return nil
 	}
 	reserveCopy := reserve.DeepCopy()
-	fmt.Println(reserveCopy.Status.ReservationStatus + " ----------------- ")
-	if reserveCopy.Status.ReservationStatus == "" {
+	fmt.Println(reserveCopy.Spec.Status.ReservationStatus + " ----------------- ")
+	if reserveCopy.Spec.Status.ReservationStatus == "" {
 		fmt.Println("here !!!!!!!!!!!!!!!")
-		reserveCopy.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCreated
+		reserveCopy.Spec.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCreated
 	}
-	switch reserveCopy.Status.ReservationStatus {
+	switch reserveCopy.Spec.Status.ReservationStatus {
 	case resourcev1alpha1.ReservationStatusCreated:
 		rc.handleNewlyCreatedReservation(reserveCopy)
 	case resourcev1alpha1.ReservationStatusInProgress:
@@ -287,7 +287,7 @@ func (rc *ReservationController) syncReservation(key string) error {
 		}
 	}
 	unstructuredObj, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(reserveCopy)
-	fmt.Println(reserveCopy.Status.ReservationStatus, "------<>")
+	fmt.Println(reserveCopy.Spec.Status.ReservationStatus, "------<>", reserveCopy.Spec.Placeholders, unstructuredObj)
 	res, err := rc.dynamicCli.Resource(ReservationCRD).Namespace(reserve.Namespace).Update(context.TODO(), &unstructured.Unstructured{Object: unstructuredObj}, metav1.UpdateOptions{})
 	fmt.Println(res.Object)
 	if err != nil {
@@ -310,7 +310,7 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 	stats := make(map[int]map[int]bool)
 	for _, pod := range pods {
 		_, resourceId, replicaId := splitReservationPodName(pod.Name)
-		reservation.Placeholders[pod.Name] = resourcev1alpha1.PodStatus{
+		reservation.Spec.Placeholders[pod.Name] = resourcev1alpha1.PodStatus{
 			PodStatus: string(pod.Status.Phase),
 		}
 		if pod.Status.Phase == v1.PodRunning {
