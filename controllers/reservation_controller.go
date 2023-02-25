@@ -62,16 +62,17 @@ var (
 )
 
 type ReservationController struct {
-	Stopper     chan struct{}
-	queue       workqueue.RateLimitingInterface
-	dynamicCli  dynamic.Interface
-	crdInformer cache.SharedIndexInformer
-	crdLister   cache.GenericLister
-	podLister   cache.GenericLister
-	cacheSynced cache.InformerSynced
-	podInformer cache.SharedIndexInformer
-	recorder    record.EventRecorder
-	hasSynced   func() bool
+	Stopper         chan struct{}
+	queue           workqueue.RateLimitingInterface
+	dynamicCli      dynamic.Interface
+	informerFactory dynamicinformer.DynamicSharedInformerFactory
+	crdInformer     cache.SharedIndexInformer
+	crdLister       cache.GenericLister
+	podLister       cache.GenericLister
+	cacheSynced     cache.InformerSynced
+	podInformer     cache.SharedIndexInformer
+	recorder        record.EventRecorder
+	hasSynced       cache.InformerSynced
 }
 
 func (rc *ReservationController) onAdd(obj interface{}) {
@@ -128,22 +129,32 @@ func (rc *ReservationController) handleReservationDelete(obj interface{}) error 
 		}
 	}
 	fmt.Println("begin to clean pods for deleted reservation ", reserve.Name, " - ", reserve.Namespace)
-	for _, request := range reserve.Spec.ResourceRequests {
-		for i := 0; i < request.Replica; i++ {
-			podName := rc.getPlaceholderPodName(reserve, i, request.ResourceId)
-			fmt.Println("try to clean placeholder pod ", podName)
-			_, err := rc.podLister.ByNamespace(reserve.Namespace).Get(podName)
-			if err != nil && errors.IsNotFound(err) {
-				fmt.Sprintf("%s - %s pod not found ", reserve.Namespace, podName)
-			} else {
-				fmt.Sprintf("trying to remove pod %s - %s", podName, reserve.Namespace)
-				err := rc.dynamicCli.Resource(podResource).Namespace(reserve.Namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
-				if err != nil {
-					fmt.Println(err)
-				}
-			}
+	pods, err := rc.getReservationPods(reserve)
+	if err != nil {
+		fmt.Println("error when get reservation placeholder pods. ", err)
+	}
+	for _, pod := range pods {
+		err := rc.dynamicCli.Resource(podResource).Namespace(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			fmt.Println(err)
 		}
 	}
+	//for _, request := range reserve.Spec.ResourceRequests {
+	//	for i := 0; i < request.Replica; i++ {
+	//		podName := rc.getPlaceholderPodName(reserve, i, request.ResourceId)
+	//		fmt.Println("try to clean placeholder pod ", podName)
+	//		_, err := rc.podLister.ByNamespace(reserve.Namespace).Get(podName)
+	//		if err != nil && errors.IsNotFound(err) {
+	//			fmt.Sprintf("%s - %s pod not found ", reserve.Namespace, podName)
+	//		} else {
+	//			fmt.Sprintf("trying to remove pod %s - %s", podName, reserve.Namespace)
+	//			err := rc.dynamicCli.Resource(podResource).Namespace(reserve.Namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
+	//			if err != nil {
+	//				fmt.Println(err)
+	//			}
+	//		}
+	//	}
+	//}
 	return nil
 }
 func NewReservationController() *ReservationController {
@@ -171,9 +182,10 @@ func NewReservationController() *ReservationController {
 		queue:      queue,
 		Stopper:    stopper,
 	}
-	sharedInformer := dynamicinformer.NewFilteredDynamicSharedInformerFactory(controller.dynamicCli, 0, metav1.NamespaceAll, nil).ForResource(ReservationCRD)
-	controller.crdInformer = sharedInformer.Informer()
-	controller.crdLister = sharedInformer.Lister()
+	sharedInformerFactory := dynamicinformer.NewDynamicSharedInformerFactory(controller.dynamicCli, 0)
+	controller.informerFactory = sharedInformerFactory
+	controller.crdInformer = sharedInformerFactory.ForResource(ReservationCRD).Informer()
+	controller.crdLister = sharedInformerFactory.ForResource(ReservationCRD).Lister()
 	controller.crdInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: controller.onDelete,
 		AddFunc:    controller.onAdd,
@@ -181,19 +193,20 @@ func NewReservationController() *ReservationController {
 	})
 
 	podEventHandler := newPodEventHandler(controller.queue.AddRateLimited, controller.crdLister)
-	sharedPodInformer := dynamicinformer.NewDynamicSharedInformerFactory(dynamicCli, 0).ForResource(podResource)
-	podInformer := sharedPodInformer.Informer()
-	controller.podLister = sharedPodInformer.Lister()
+	// sharedPodInformer := dynamicinformer.NewDynamicSharedInformerFactory(dynamicCli, 0).ForResource(podResource)
+	podInformer := sharedInformerFactory.ForResource(podResource).Informer()
+	controller.podLister = sharedInformerFactory.ForResource(podResource).Lister()
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    podEventHandler.onPodAdd,
 		DeleteFunc: podEventHandler.onPodDeleted,
 		UpdateFunc: podEventHandler.onPodUpdate,
 	})
+	controller.podInformer = podInformer
 	controller.hasSynced = func() bool {
-		return controller.crdInformer.HasSynced() && podInformer.HasSynced()
+		return controller.crdInformer.HasSynced()
+		// return controller.crdInformer.HasSynced() && controller.podInformer.HasSynced()
 	}
-	go controller.crdInformer.Run(stopper)
-	go podInformer.Run(stopper)
+	go sharedInformerFactory.Start(stopper)
 	return controller
 
 }
@@ -223,29 +236,47 @@ func (rc *ReservationController) getReservation(namespace string, name string) (
 }
 
 func (rc *ReservationController) getPlaceholderPodName(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int) string {
-	return reservation.Name + "-" + strconv.Itoa(resourceId) + "-" + strconv.Itoa(replicaId)
+	return GenerateRandomName(reservation.Name+"-"+strconv.Itoa(resourceId)+"-"+strconv.Itoa(replicaId)+"-", 5)
 }
 
+func (rc *ReservationController) getPlaceholderPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int) (*v1.Pod, error) {
+	pods, err := rc.podLister.ByNamespace(reservation.Namespace).List(labels.SelectorFromSet(
+		map[string]string{
+			config.ReservationAppLabel:   reservation.Name,
+			config.ReservationResourceId: strconv.Itoa(resourceId),
+			config.ReservationReplicaId:  strconv.Itoa(replicaId),
+		},
+	))
+	if err != nil {
+		return nil, err
+	}
+	if pods == nil || len(pods) <= 0 {
+		return nil, fmt.Errorf("no target placeholder found")
+	}
+	var pod *v1.Pod
+	runtime.DefaultUnstructuredConverter.FromUnstructured(pods[0].(*unstructured.Unstructured).Object, &pod)
+	return pod, nil
+}
 func (rc *ReservationController) handleNewlyCreatedReservation(reservation *resourcev1alpha1.Reservation) {
 	for _, request := range reservation.Spec.ResourceRequests {
 		for i := 0; i < request.Replica; i++ {
-			podName := rc.getPlaceholderPodName(reservation, i, request.ResourceId)
-			fmt.Println("trying to get placeholder named " + podName)
-			_, err := rc.podLister.ByNamespace(reservation.Namespace).Get(podName)
-			if err != nil && errors.IsNotFound(err) {
+			pod, err := rc.getPlaceholderPod(reservation, i, request.ResourceId)
+			if err != nil {
+				fmt.Sprintf("error when get placeholder pod of app name %s, resource id %d and replica id %d", reservation.Name, request.ResourceId, i)
+				fmt.Println(err)
+			}
+			if 1 == 1 || err != nil && errors.IsNotFound(err) {
 				podToCreate := rc.assemblyAPod(reservation, i, request.ResourceId, request.Mem, request.Cpu)
 				unstructuredPod, err := runtime.DefaultUnstructuredConverter.ToUnstructured(podToCreate)
-				fmt.Println("!!!!!!!! ", unstructuredPod)
 				if err != nil {
 					fmt.Println("error when convert pod into unstructured data")
 				}
 				_, err = rc.dynamicCli.Resource(podResource).Namespace(reservation.Namespace).Create(context.TODO(), &unstructured.Unstructured{Object: unstructuredPod}, metav1.CreateOptions{})
 				if err != nil {
-					fmt.Println(err, " ********************* ")
+					fmt.Println(err)
 				}
-				//_, err := rc.dynamicCli.Resource().Namespace(reservation.Namespace).Create(context.TODO(), &runtime.Unstructured(podToCreate), interface{})
 			} else {
-				fmt.Printf("already found this pod %s - %s \n", podName, reservation.Namespace)
+				fmt.Printf("already found this pod %s - %s \n", pod.Name, reservation.Namespace)
 			}
 		}
 	}
@@ -267,9 +298,7 @@ func (rc *ReservationController) syncReservation(key string) error {
 		return nil
 	}
 	reserveCopy := reserve.DeepCopy()
-	fmt.Println(reserveCopy.Spec.Status.ReservationStatus + " ----------------- ")
 	if reserveCopy.Spec.Status.ReservationStatus == "" {
-		fmt.Println("here !!!!!!!!!!!!!!!")
 		reserveCopy.Spec.Status.ReservationStatus = resourcev1alpha1.ReservationStatusCreated
 	}
 	switch reserveCopy.Spec.Status.ReservationStatus {
@@ -290,9 +319,9 @@ func (rc *ReservationController) syncReservation(key string) error {
 		}
 	}
 	unstructuredObj, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(reserveCopy)
-	res, err := rc.dynamicCli.Resource(ReservationCRD).Namespace(reserve.Namespace).Update(context.TODO(), &unstructured.Unstructured{Object: unstructuredObj}, metav1.UpdateOptions{})
+	_, err = rc.dynamicCli.Resource(ReservationCRD).Namespace(reserve.Namespace).Update(context.TODO(), &unstructured.Unstructured{Object: unstructuredObj}, metav1.UpdateOptions{})
 	if err != nil {
-		fmt.Println(err, res.Object)
+		fmt.Println(err)
 	}
 	return nil
 }
@@ -310,7 +339,11 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 	var cnt int = 0
 	stats := make(map[int]map[int]bool)
 	for _, pod := range pods {
-		_, resourceId, replicaId := splitReservationPodName(pod.Name)
+		_, resourceId, replicaId, ok := splitReservationPodInfo(pod)
+		if !ok {
+			fmt.Errorf("error when split pod info ")
+			return
+		}
 		if reservation.Spec.Placeholders == nil {
 			reservation.Spec.Placeholders = make(map[string]resourcev1alpha1.PodStatus)
 		}
@@ -365,7 +398,9 @@ func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Rese
 			Name:      rc.getPlaceholderPodName(reservation, replicaId, resourceId),
 			Namespace: reservation.Namespace,
 			Labels: map[string]string{
-				config.ReservationAppLabel: reservation.Name,
+				config.ReservationAppLabel:   reservation.Name,
+				config.ReservationReplicaId:  strconv.Itoa(replicaId),
+				config.ReservationResourceId: strconv.Itoa(resourceId),
 			},
 		},
 		Spec: v1.PodSpec{
@@ -417,106 +452,14 @@ func (rc *ReservationController) getReservationPods(reservation *resourcev1alpha
 
 func (rc *ReservationController) RunController() {
 	fmt.Println("Launching reservation controller")
-	//if !cache.WaitForCacheSync(rc.Stopper, rc.cacheSynced) {
-	//	fmt.Println("error when sync cache")
-	//	return
-	//}
+	fmt.Println(rc.crdInformer, "-----------", rc.podInformer)
+	res := rc.informerFactory.WaitForCacheSync(rc.Stopper)
+	if !(res[podResource] && res[ReservationCRD]) {
+		fmt.Println("error when sync cache")
+		return
+	}
 	defer utilruntime.HandleCrash()
 	for rc.processNextItem() {
 		fmt.Println("next loop")
 	}
 }
-
-//+kubebuilder:rbac:groups=resource.scheduling.org,resources=reservations,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=resource.scheduling.org,resources=reservations/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=resource.scheduling.org,resources=reservations/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Reservation object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.13.0/pkg/reconcile
-//func (r *ReservationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-//	_ = log.FromContext(ctx)
-//
-//	// TODO(user): your logic here
-//
-//	return ctrl.Result{}, nil
-//}
-//
-//// SetupWithManager sets up the controller with the Manager.
-//func (r *ReservationReconciler) SetupWithManager(mgr ctrl.Manager) error {
-//	return ctrl.NewControllerManagedBy(mgr).
-//		For(&resourcev1alpha1.Reservation{}).
-//		Complete(r)
-//}
-//func getPlaceholderPodName(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int) string {
-//	return reservation.Name + "_" + strconv.Itoa(resourceId) + "_" + strconv.Itoa(replicaId)
-//}
-//func (r *ReservationReconciler) reconcile(request reconcile.Request, reservation *resourcev1alpha1.Reservation) (*reconcile.Result, error) {
-//	for _, request := range reservation.Spec.ResourceRequests {
-//		for i := 0; i < request.Replica; i++ {
-//			podName := getPlaceholderPodName(reservation, i, request.ResourceId)
-//			pod := &corev1.Pod{}
-//			err := r.Get(context.TODO(), types.NamespacedName{
-//				Name:      podName,
-//				Namespace: reservation.Namespace,
-//			}, pod)
-//			if err != nil && errors.IsNotFound(err) {
-//				err = r.Create(context.TODO(), r.createAPod(reservation, i, request.ResourceId, request.Mem, request.Cpu))
-//				if err != nil {
-//					return &reconcile.Result{}, err
-//				} else {
-//					return nil, nil
-//				}
-//			} else if err != nil {
-//				return &reconcile.Result{}, nil
-//			} else {
-//				podStatus, ok := reservation.Placeholders[podName]
-//				if ok {
-//					if podStatus.PodStatus != string(pod.Status.Phase) {
-//						reservation.Placeholders[podName] = resourcev1alpha1.PodStatus{
-//							PodStatus: string(pod.Status.Phase),
-//						}
-//					}
-//				} else {
-//					reservation.Placeholders[podName] = resourcev1alpha1.PodStatus{
-//						PodStatus: string(pod.Status.Phase),
-//					}
-//				}
-//			}
-//		}
-//	}
-//	return &reconcile.Result{}, nil
-//}
-//
-//func (r *ReservationReconciler) createAPod(reservation *resourcev1alpha1.Reservation, replicaId int, resourceId int, mem string, core string) *corev1.Pod {
-//	labels := reservation.Labels
-//	pod := &corev1.Pod{
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      getPlaceholderPodName(reservation, replicaId, resourceId),
-//			Namespace: reservation.Namespace,
-//			Labels:    labels,
-//		},
-//		Spec: corev1.PodSpec{
-//			Containers: []corev1.Container{
-//				{
-//					Name:            "pause",
-//					Image:           "k8s.gcr.io/pause:3.5",
-//					ImagePullPolicy: corev1.PullIfNotPresent,
-//					Resources: corev1.ResourceRequirements{
-//						Requests: corev1.ResourceList{
-//							"memory": resource.MustParse(mem),
-//							"cpu":    resource.MustParse(core),
-//						},
-//					},
-//				},
-//			},
-//		},
-//	}
-//	return pod
-//}

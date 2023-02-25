@@ -67,11 +67,13 @@ func (handler *PodEventHandler) onPodDeleted(obj interface{}) {
 
 func (handler *PodEventHandler) enqueueKeyForReservation(pod *v1.Pod) {
 	appName, ok := getReservationAppName(pod)
-	fmt.Println("app name ", appName)
+	fmt.Println("app name ", appName, ok)
 	if !ok {
 		return
 	}
+	fmt.Println(handler.reservationLister, "*********************************")
 	_, err := handler.reservationLister.ByNamespace(pod.Namespace).Get(appName)
+	fmt.Println("err is ", err)
 	if err != nil {
 		fmt.Println("cannot get the targeted reservation. ", err)
 		return
