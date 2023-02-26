@@ -27,7 +27,7 @@ func createMetaNamespaceKey(namespace string, name string) string {
 //	return podName[:index], resourceId, replicaId
 //}
 
-func splitReservationPodInfo(pod *v1.Pod) (string, int, int, bool) {
+func SplitReservationPodInfo(pod *v1.Pod) (string, int, int, bool) {
 	label := pod.Labels
 	appName, ok := label[config.ReservationAppLabel]
 	if !ok {
