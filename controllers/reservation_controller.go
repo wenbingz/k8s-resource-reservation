@@ -423,7 +423,7 @@ func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Rese
 }
 
 func (rc *ReservationController) getReservationPods(reservation *resourcev1alpha1.Reservation) ([]*v1.Pod, error) {
-	matchLabels := map[string]string{config.ReservationAppLabel: reservation.Name}
+	matchLabels := map[string]string{config.ReservationAppLabel: reservation.Name, config.ReservationRole: config.PlaceholderRole}
 	selector := labels.SelectorFromSet(matchLabels)
 	pods, err := rc.podLister.ByNamespace(reservation.Namespace).List(selector)
 	if err != nil {
