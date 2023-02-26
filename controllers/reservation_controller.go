@@ -323,7 +323,7 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 	var cnt int = 0
 	stats := make(map[int]map[int]bool)
 	for _, pod := range pods {
-		_, resourceId, replicaId, ok := splitReservationPodInfo(pod)
+		_, resourceId, replicaId, ok := SplitReservationPodInfo(pod)
 		if !ok {
 			fmt.Errorf("error when split pod info ")
 			return
