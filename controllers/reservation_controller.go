@@ -78,7 +78,7 @@ type ReservationController struct {
 func (rc *ReservationController) onAdd(obj interface{}) {
 	var reserve *resourcev1alpha1.Reservation
 	runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, &reserve)
-	fmt.Printf("added Reservation %s in namespace %s\n", reserve.Name, reserve.Namespace)
+	fmt.Printf("added Reservation %s in namespace %s \n", reserve.Name, reserve.Namespace)
 	rc.enqueue(reserve)
 }
 
@@ -93,7 +93,7 @@ func (rc *ReservationController) onUpdate(oldObj interface{}, obj interface{}) {
 	}
 	if !equality.Semantic.DeepEqual(oldReserve, newReserve) {
 	}
-	fmt.Sprintf("a reservation %s has been updated ", oldReserve.Name)
+	fmt.Printf("a reservation %s has been updated \n", oldReserve.Name)
 }
 
 func (rc *ReservationController) onDelete(obj interface{}) {
@@ -246,7 +246,7 @@ func (rc *ReservationController) handleNewlyCreatedReservation(reservation *reso
 		for i := 0; i < request.Replica; i++ {
 			pod, err := rc.getPlaceholderPod(reservation, i, request.ResourceId)
 			if err != nil {
-				fmt.Sprintf("error when get placeholder pod of app name %s, resource id %d and replica id %d", reservation.Name, request.ResourceId, i)
+				fmt.Printf("error when get placeholder pod of app name %s, resource id %d and replica id %d \n", reservation.Name, request.ResourceId, i)
 				fmt.Println(err)
 			}
 			if 1 == 1 || err != nil && errors.IsNotFound(err) {
@@ -388,6 +388,7 @@ func (rc *ReservationController) assemblyAPod(reservation *resourcev1alpha1.Rese
 				config.ReservationAppLabel:   reservation.Name,
 				config.ReservationReplicaId:  strconv.Itoa(replicaId),
 				config.ReservationResourceId: strconv.Itoa(resourceId),
+				config.ReservationRole:       config.PlaceholderRole,
 			},
 		},
 		Spec: v1.PodSpec{

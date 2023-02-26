@@ -36,7 +36,7 @@ func (handler *PodEventHandler) onPodUpdate(old, updated interface{}) {
 	runtime.DefaultUnstructuredConverter.FromUnstructured(old.(*unstructured.Unstructured).Object, &oldPod)
 	runtime.DefaultUnstructuredConverter.FromUnstructured(updated.(*unstructured.Unstructured).Object, &updatedPod)
 	fmt.Println(oldPod.Namespace, " --------------- ", oldPod.Name)
-	fmt.Sprintf("detect update event to pod %s - %s", oldPod.Namespace, oldPod.Name)
+	fmt.Printf("detect update event to pod %s - %s \n", oldPod.Namespace, oldPod.Name)
 	fmt.Println(updatedPod.ResourceVersion, oldPod.ResourceVersion)
 	if updatedPod.ResourceVersion == oldPod.ResourceVersion {
 		return
