@@ -38,10 +38,19 @@ spec:
               placeholders:
                 additionalProperties:
                   properties:
+                    isoccupied:
+                      type: string
                     podstatus:
                       type: string
+                    replicaId:
+                      type: integer
+                    resourceid:
+                      type: integer
                   required:
+                  - isoccupied
                   - podstatus
+                  - replicaId
+                  - resourceid
                   type: object
                 type: object
               resourcerequest:
