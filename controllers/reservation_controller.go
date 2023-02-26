@@ -139,22 +139,6 @@ func (rc *ReservationController) handleReservationDelete(obj interface{}) error 
 			fmt.Println(err)
 		}
 	}
-	//for _, request := range reserve.Spec.ResourceRequests {
-	//	for i := 0; i < request.Replica; i++ {
-	//		podName := rc.getPlaceholderPodName(reserve, i, request.ResourceId)
-	//		fmt.Println("try to clean placeholder pod ", podName)
-	//		_, err := rc.podLister.ByNamespace(reserve.Namespace).Get(podName)
-	//		if err != nil && errors.IsNotFound(err) {
-	//			fmt.Sprintf("%s - %s pod not found ", reserve.Namespace, podName)
-	//		} else {
-	//			fmt.Sprintf("trying to remove pod %s - %s", podName, reserve.Namespace)
-	//			err := rc.dynamicCli.Resource(podResource).Namespace(reserve.Namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
-	//			if err != nil {
-	//				fmt.Println(err)
-	//			}
-	//		}
-	//	}
-	//}
 	return nil
 }
 func NewReservationController() *ReservationController {
