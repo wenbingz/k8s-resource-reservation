@@ -42,6 +42,8 @@ type ResourceRequest struct {
 type PodStatus struct {
 	PodStatus  string `json:"podstatus"`
 	IsOccupied string `json:"isoccupied"`
+	ResourceId int    `json:"resourceid"`
+	ReplicaId  int    `json:"replicaId"`
 }
 
 // ReservationSpec defines the desired state of Reservation

@@ -332,7 +332,10 @@ func (rc *ReservationController) updateReservationStatusByCheckingPods(reservati
 			reservation.Spec.Placeholders = make(map[string]resourcev1alpha1.PodStatus)
 		}
 		reservation.Spec.Placeholders[pod.Name] = resourcev1alpha1.PodStatus{
-			PodStatus: string(pod.Status.Phase),
+			PodStatus:  string(pod.Status.Phase),
+			IsOccupied: "unoccupied",
+			ResourceId: resourceId,
+			ReplicaId:  replicaId,
 		}
 		if pod.Status.Phase == v1.PodRunning {
 			cnt += 1
